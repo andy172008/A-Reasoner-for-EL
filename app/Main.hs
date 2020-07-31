@@ -104,9 +104,9 @@ unique lst = lst
 
 --主体函数，main函数直接调用这个函数就能完成功能
 runReasoner :: TBox -> Concept -> Concept -> Bool
-runReasoner ts = isImplied norms norms supers
+runReasoner tbox a b = isImplied norms norms supers a b
   where
-    norms = normalisation 1 ts
+    norms = normalisation 1 tbox
     supers = getSuperListByTbox norms
 
 --这个函数通过三条规则来检查两个概念是否有包含关系
@@ -209,5 +209,5 @@ main = do
       --定义题目中的TBox
       oneTBox = [a `Implies` b `Conjunction` r `Exist` c, c `Implies` s `Exist` d, r `Exist` s `Exist` Top `Conjunction` b `Implies` d]
 
-  putStrLn "Logic for Applications"
+  putStrLn "SX1916085 贺星宇 $Logic for Applications$ A Reasoner for EL"
   if runReasoner oneTBox a d then print "A is implied in D" else print "A is not implied in D"
