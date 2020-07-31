@@ -21,17 +21,22 @@ data Super = Super {self :: Concept, sup :: [Concept]} deriving (Eq, Show)
 --将一条axiom化简，返回若干条axiom也就是TBox
 normalisationOneAxiom :: Int -> Axiom -> TBox
 normalisationOneAxiom i axiom = case axiom of
+  --这里可以应用第一条normalisation rule
   a `Equivalence` b -> [a `Implies` b, b `Implies` a]
+  --这里可以应用第六条normalisation rule
   a `Implies` (b `Conjunction` c) -> [a `Implies` b, a `Implies` c]
   a `Implies` b ->
+    --这里可以应用第二条normalisation rule
     if isComplex a && isComplex b
       then [a `Implies` Concept ("new" ++ show i), Concept ("new" ++ show i) `Implies` b]
-      else
+      else --这里可以应用第三条和第四条normalisation rule
+
         if isComplex a
           then [fst (divideByTuple i a) `Implies` Concept ("new" ++ show i), snd (divideByTuple i a) `Implies` b]
-          else
+          else --这里可以应用第五条normalisation rule
+
             if isComplex b
-              then [a `Implies` snd (divideByTuple i b), Concept ("new" ++ show i) `Implies` fst (divideByTuple i b)] --NF5
+              then [a `Implies` snd (divideByTuple i b), Concept ("new" ++ show i) `Implies` fst (divideByTuple i b)]
               else [axiom]
 
 --先将TBox中的第一条化简，再不断迭代，直到TBox中的所有axiom化简完成
@@ -47,12 +52,13 @@ normalisation i (axiom : others) =
 --判断一个concept是否是复杂概念
 isComplex :: Concept -> Bool
 isComplex concept = case concept of
-  a `Conjunction` b -> isComplex' a || isComplex' b
-  _ `Exist` a -> isComplex' a
+  a `Conjunction` b -> isComplexOneConcept a || isComplexOneConcept b
+  _ `Exist` a -> isComplexOneConcept a
   _ -> False
 
-isComplex' :: Concept -> Bool
-isComplex' concept = case concept of
+--为了完善isComplex的一个工具函数
+isComplexOneConcept :: Concept -> Bool
+isComplexOneConcept concept = case concept of
   Conjunction _ _ -> True
   Exist _ _ -> True
   _ -> False
@@ -62,22 +68,25 @@ divideByTuple :: Int -> Concept -> (Concept, Concept)
 divideByTuple i concept = case concept of
   a `Exist` b -> (b, a `Exist` Concept ("new" ++ show i))
   a `Conjunction` b ->
-    if isComplex' a
+    if isComplexOneConcept a
       then (a, Conjunction (Concept ("new" ++ show i)) b)
       else (b, Conjunction (Concept ("new" ++ show i)) a)
 
-cons :: TBox -> [Super]
-cons ts = init (unique (extract ts))
+--由一个TBox得到一个对应的Super列表
+getSuperListByTbox :: TBox -> [Super]
+getSuperListByTbox tbox = init (unique (getConeptListByTBox tbox))
   where
     init [] = []
-    init (c : cs) = Super c [c, Top] : init cs
+    init (c : others) = Super c [c, Top] : init others
 
-extract :: TBox -> [Concept]
-extract [] = []
-extract (t : ts) = extract' t ++ extract ts
+--将TBox中的concept提取出来，构成一个概念列表
+getConeptListByTBox :: TBox -> [Concept]
+getConeptListByTBox [] = []
+getConeptListByTBox (t : ts) = getConceptListByAxiom t ++ getConeptListByTBox ts
 
-extract' :: Axiom -> [Concept]
-extract' (a `Implies` b) = extr a ++ extr b
+--将公理中的concept提取出来，返回一个概念列表
+getConceptListByAxiom :: Axiom -> [Concept]
+getConceptListByAxiom (a `Implies` b) = extr a ++ extr b
   where
     extr c = case c of
       Conjunction e f -> extr e ++ extr f
@@ -92,54 +101,57 @@ unique (x : y : lst) =
     else x : unique (y : lst)
 unique lst = lst
 
-run :: TBox -> Concept -> Concept -> Bool
-run ts a b = check norms norms supers a b
+--主体函数，main函数直接调用这个函数就能完成功能
+runReasoner :: TBox -> Concept -> Concept -> Bool
+runReasoner ts = isImplied norms norms supers
   where
     norms = normalisation 1 ts
-    supers = cons norms
+    supers = getSuperListByTbox norms
 
-check :: TBox -> TBox -> [Super] -> Concept -> Concept -> Bool
-check _ [] ssc a b = suc a b ssc
-check tsc (t : ts) ssc a b = case t of
+--这个函数通过三条规则来检查两个概念是否有包含关系
+isImplied :: TBox -> TBox -> [Super] -> Concept -> Concept -> Bool
+isImplied _ [] superList a b = suc a b superList
+isImplied tsc (t : ts) superList a b = case t of
   Conjunction a1 a2 `Implies` a3 ->
-    suc a b ssc
-      || (if r1 /= ssc then check tsc tsc r1 a b else check tsc ts ssc a b)
+    suc a b superList
+      || (if r1 /= superList then isImplied tsc tsc r1 a b else isImplied tsc ts superList a b)
     where
-      r1 = rule1 a1 a2 a3 ssc
+      --定义第一条规则
+      r1 = rule1 a1 a2 a3 superList
       rule1 _ _ _ [] = []
       rule1 a1 a2 a3 (s : ss) =
-        if (a1 `elem` (sup s) && a2 `elem` (sup s))
-          then s {sup = unique (a3 : (sup s))} : (rule1 a1 a2 a3 ss)
-          else s : (rule1 a1 a2 a3 ss)
+        if a1 `elem` sup s && a2 `elem` sup s
+          then s {sup = unique (a3 : sup s)} : rule1 a1 a2 a3 ss
+          else s : rule1 a1 a2 a3 ss
   b1 `Implies` Exist b2 b3 ->
-    if suc a b ssc
-      then True --R2
-      else
-        if r2 /= tsc
-          then check r2 r2 ssc a b
-          else check tsc ts ssc a b
+    suc a b superList
+      || ( if r2 /= tsc
+             then isImplied r2 r2 superList a b
+             else isImplied tsc ts superList a b
+         )
     where
-      r2 = unique (rule2 b1 b2 b3 tsc ssc)
+      --定义第二条规则
+      r2 = unique (rule2 b1 b2 b3 tsc superList)
       rule2 _ _ _ tt [] = tt
       rule2 b1 b2 b3 tt (s : ss) =
-        if (b1 `elem` (sup s))
-          then (rule2 b1 b2 b3 (unique (newt : tt)) ss)
+        if b1 `elem` sup s
+          then rule2 b1 b2 b3 (unique (newt : tt)) ss
           else rule2 b1 b2 b3 tt ss
         where
           newt = self s `Implies` Exist b2 b3
   Exist c1 c2 `Implies` c3 ->
-    if suc a b ssc
-      then True --R3
-      else
-        if r3 /= ssc
-          then check tsc tsc r3 a b
-          else check tsc ts ssc a b
+    suc a b superList
+      || ( if r3 /= superList
+             then isImplied tsc tsc r3 a b
+             else isImplied tsc ts superList a b
+         )
     where
-      r3 = rule3 c1 c2 c3 test ssc
+      --定义第三条规则
+      r3 = rule3 c1 c2 c3 test superList
       test = ex tsc
       ex [] = []
       ex (t : tt) = case t of
-        x `Implies` Exist c1 y -> (x, y) : (ex tt)
+        x `Implies` Exist c1 y -> (x, y) : ex tt
         _ -> ex tt
       rule3 _ _ _ [] ss = ss
       rule3 c1 c2 c3 (t : tt) ss =
@@ -148,31 +160,32 @@ check tsc (t : ts) ssc a b = case t of
           else rule3 c1 c2 c3 tt ss
         where
           added =
-            if ok c2 (snd (t)) ss
-              then add c3 (fst (t)) ss
+            if ok c2 (snd t) ss
+              then add c3 (fst t) ss
               else ss
           ok _ _ [] = False
-          ok c2 y (s : ss) = y == (self s) && c2 `elem` (sup s) || ok c2 y ss
+          ok c2 y (s : ss) = y == self s && c2 `elem` sup s || ok c2 y ss
           add _ _ [] = []
           add c3 x (s : ss) =
-            if (x == (self s))
-              then s {sup = unique (c3 : (sup s))} : add c3 x ss
+            if x == self s
+              then s {sup = unique (c3 : sup s)} : add c3 x ss
               else s : add c3 x ss
   d1 `Implies` d2 ->
-    if added /= ssc
-      then check tsc tsc added a b
-      else check tsc ts ssc a b
+    if added /= superList
+      then isImplied tsc tsc added a b
+      else isImplied tsc ts superList a b
     where
-      added = add d1 d2 ssc
+      added = add d1 d2 superList
       add _ _ [] = []
       add d1 d2 (s : ss) =
         if d1 == self s
           then s {sup = unique (d2 : sup s)} : add d1 d2 ss
           else s : add d1 d2 ss
 
+--服务于check函数的工具函数
 suc :: Concept -> Concept -> [Super] -> Bool
 suc a b [] = False
-suc a b (s : ss) = ((self s) == a && b `elem` (sup s)) || suc a b ss
+suc a b (s : ss) = (self s == a && b `elem` sup s) || suc a b ss
 
 --定义运算符的优先级
 infixl 4 `Implies`
@@ -184,6 +197,7 @@ infixl 6 `Conjunction`
 infixr 7 `Exist`
 
 main = do
+  --定义题目中的概念和关系
   let a = Concept "A"
       b = Concept "B"
       c = Concept "C"
@@ -191,7 +205,8 @@ main = do
       e = Concept "E"
       r = Role "R"
       s = Role "S"
+      --定义题目中的TBox
       oneTBox = [a `Implies` b `Conjunction` r `Exist` c, c `Implies` s `Exist` d, r `Exist` s `Exist` Top `Conjunction` b `Implies` d]
 
   putStrLn "Logic for Applications"
-  print (run oneTBox a d)
+  if runReasoner oneTBox a d then print "A is implied in D" else print "A is not implied in D"
